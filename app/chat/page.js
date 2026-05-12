@@ -47,6 +47,15 @@ function GearIcon({ className = "w-5 h-5" }) {
     </svg>
   );
 }
+function MenuIcon({ className = "w-5 h-5" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
 function LogoutIcon({ className = "w-5 h-5" }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -113,7 +122,7 @@ function LockIcon({ className = "w-4 h-4" }) {
   );
 }
 
-function Sidebar({ trial = false, onLockedClick }) {
+function Sidebar({ trial = false, onLockedClick, mobileOpen = false, onCloseMobile }) {
   const LockedItem = ({ icon, label }) => (
     <button
       onClick={onLockedClick}
@@ -126,7 +135,20 @@ function Sidebar({ trial = false, onLockedClick }) {
   );
 
   return (
-    <aside className="w-64 shrink-0 bg-[#FAEEDB] border-r border-[#1E1E2E]/8 flex flex-col px-5 py-6">
+    <>
+      {/* Backdrop for mobile drawer */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-[#1E1E2E]/40 lg:hidden"
+          onClick={onCloseMobile}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`fixed lg:relative inset-y-0 left-0 z-40 w-64 shrink-0 bg-[#FAEEDB] border-r border-[#1E1E2E]/8 flex flex-col px-5 py-6 transform transition-transform duration-300 lg:translate-x-0 ${
+          mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
       {/* Logo */}
       <Link href="/" className="flex items-center gap-2.5 mb-8">
         <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-[#4F46E5]/25 bg-white">
@@ -200,7 +222,8 @@ function Sidebar({ trial = false, onLockedClick }) {
           </p>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -399,6 +422,7 @@ function HomeContent() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [user, setUser] = useState(null);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const userMenuRef = useRef(null);
   const router = useRouter();
 
@@ -520,12 +544,27 @@ function HomeContent() {
         }`}
         aria-hidden={paywallOpen}
       >
-      <Sidebar trial={trial} onLockedClick={handleLockedClick} />
+      <Sidebar
+        trial={trial}
+        onLockedClick={handleLockedClick}
+        mobileOpen={mobileSidebarOpen}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
+      />
 
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar — bell + avatar hidden in trial mode */}
-        <header className="px-8 lg:px-12 py-5 flex items-center justify-end gap-4 min-h-[80px]">
+        <header className="px-5 lg:px-12 py-5 flex items-center gap-4 min-h-[80px]">
+          {/* Mobile hamburger — opens the sidebar drawer */}
+          <button
+            type="button"
+            onClick={() => setMobileSidebarOpen(true)}
+            className="lg:hidden w-10 h-10 rounded-full bg-white/70 border border-[#1E1E2E]/8 flex items-center justify-center text-[#1E1E2E] hover:bg-white transition"
+            aria-label="Open menu"
+          >
+            <MenuIcon />
+          </button>
+          <div className="flex-1" />
           {!trial && (
           <button className="relative w-10 h-10 rounded-full bg-white/70 border border-[#1E1E2E]/8 flex items-center justify-center text-[#1E1E2E] hover:bg-white transition">
             <BellIcon />

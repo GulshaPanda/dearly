@@ -58,9 +58,11 @@ function StarRow() {
 
 function TopNav({ onLoginClick }) {
   return (
-    <header className="absolute top-0 left-0 right-0 z-30 px-6 lg:px-12 py-6">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
+    <header className="absolute top-0 left-0 right-0 z-30 px-5 lg:px-12 py-5 lg:py-6">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
         <Logo />
+
+        {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-8 text-sm font-semibold text-[#1E1E2E]/75">
           <Link href="#product" className="hover:text-[#1E1E2E] transition">Product</Link>
           <Link href="#how" className="hover:text-[#1E1E2E] transition">How it works</Link>
@@ -79,6 +81,23 @@ function TopNav({ onLoginClick }) {
             Try it Free
           </Link>
         </nav>
+
+        {/* Mobile nav — just Login + Try it Free */}
+        <div className="md:hidden flex items-center gap-2 text-sm font-semibold">
+          <button
+            type="button"
+            onClick={onLoginClick}
+            className="text-[#1E1E2E]/75 hover:text-[#1E1E2E] transition cursor-pointer px-2"
+          >
+            Log In
+          </button>
+          <Link
+            href="/chat?trial=true"
+            className="bg-[#1E1E2E] text-white rounded-full px-4 py-2 text-sm font-semibold hover:bg-[#2c2c44] transition cursor-pointer"
+          >
+            Try Free
+          </Link>
+        </div>
       </div>
     </header>
   );

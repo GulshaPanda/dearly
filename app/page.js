@@ -675,7 +675,11 @@ function LoginModal({ open, onClose, initialMode = "signin" }) {
               : "Sign in to pick up where you left off."}
           </p>
 
-          {/* Google */}
+          {/*
+            Google sign-in temporarily disabled — re-enable by un-commenting the
+            block below once Google Cloud OAuth client is set up and credentials
+            are added to Supabase.
+
           <button
             type="button"
             onClick={handleGoogle}
@@ -693,6 +697,7 @@ function LoginModal({ open, onClose, initialMode = "signin" }) {
             </span>
             <div className="flex-1 h-px bg-[#1E1E2E]/12" />
           </div>
+          */}
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <input

@@ -827,17 +827,31 @@ function LandingContent() {
   const openSignup = () => { setInitialMode("signup"); setLoginOpen(true); };
   const closeLogin = () => setLoginOpen(false);
 
-  // Auto-open the login modal if URL has ?login=true or ?signup=true
-  // (used by the trial paywall on /chat?trial=true)
+  // Auto-open the login modal if URL has ?login=true or ?signup=true.
+  // BUT: if the user is already signed in, skip the modal and send them to /chat instead.
   useEffect(() => {
     const wantsSignup = searchParams.get("signup") === "true";
     const wantsLogin = searchParams.get("login") === "true";
-    if (wantsSignup || wantsLogin) {
-      setInitialMode(wantsSignup ? "signup" : "signin");
-      setLoginOpen(true);
-      // Clean the query string so refresh doesn't re-trigger
-      router.replace("/");
-    }
+    if (!wantsSignup && !wantsLogin) return;
+
+    let active = true;
+    (async () => {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!active) return;
+
+      if (user) {
+        // Already signed in — bypass modal, go straight to chat
+        router.replace("/chat");
+      } else {
+        // Not signed in — open the appropriate modal
+        setInitialMode(wantsSignup ? "signup" : "signin");
+        setLoginOpen(true);
+        router.replace("/");
+      }
+    })();
+    return () => { active = false; };
   }, [searchParams, router]);
 
   return (

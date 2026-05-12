@@ -141,13 +141,13 @@ function Hero({ onLoginClick }) {
           </div>
         </div>
 
-        {/* RIGHT — Figma collage as a single image */}
-        <div className="relative w-full hidden md:flex justify-center items-center">
+        {/* RIGHT — Figma collage as a single image (visible on all screen sizes) */}
+        <div className="relative w-full flex justify-center items-center mt-4 lg:mt-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/Group%2010.png"
             alt="Dearly — gifting moments"
-            className="w-full max-w-[560px] h-auto"
+            className="w-full max-w-[420px] lg:max-w-[560px] h-auto"
           />
         </div>
       </div>

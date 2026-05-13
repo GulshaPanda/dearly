@@ -1012,24 +1012,20 @@ function HomeContent() {
 
         {/* Chat input — sticky at bottom */}
         <div className="px-6 lg:px-12 pb-6">
-          <div className="max-w-5xl mx-auto bg-white rounded-full border border-[#1E1E2E]/8 shadow-sm pl-2 pr-2 py-2 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full overflow-hidden bg-[#FAEEDB] shrink-0 ring-1 ring-[#1E1E2E]/8 ml-1">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={AI_AVATAR} alt="" className="w-full h-full object-cover" />
-            </div>
+          <div className="max-w-5xl mx-auto bg-white rounded-full border border-[#1E1E2E]/8 shadow-sm px-5 py-2 flex items-center gap-3">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              placeholder="Hey 🎁 Who's the gift for?"
+              placeholder={isWelcome ? "Hey 🎁 Who's the gift for?" : "Message Dearly…"}
               disabled={loading}
-              className="flex-1 bg-transparent text-[#1E1E2E] placeholder:text-[#6B6354]/55 focus:outline-none disabled:opacity-50"
+              className="flex-1 bg-transparent text-[#1E1E2E] placeholder:text-[#6B6354]/55 focus:outline-none disabled:opacity-50 py-2"
             />
             <button
               onClick={handleSend}
               disabled={loading || !input.trim()}
-              className="rounded-full bg-[#5946D6] hover:bg-[#4838C4] text-white w-10 h-10 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition"
+              className="rounded-full bg-[#5946D6] hover:bg-[#4838C4] text-white w-10 h-10 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition shrink-0"
               aria-label="Send"
             >
               {loading ? <span className="text-sm">…</span> : <SendIcon />}

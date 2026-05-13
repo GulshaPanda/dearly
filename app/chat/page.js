@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import ProfileModal from "@/components/ProfileModal";
 
 const AI_AVATAR = "/Robo-Refined-Face.png";
 const ROBOT_FULL = "/Robo-Refined-Full.png";
@@ -122,7 +123,7 @@ function LockIcon({ className = "w-4 h-4" }) {
   );
 }
 
-function Sidebar({ trial = false, onLockedClick, mobileOpen = false, onCloseMobile }) {
+function Sidebar({ trial = false, onLockedClick, mobileOpen = false, onCloseMobile, onNewEvent }) {
   const LockedItem = ({ icon, label }) => (
     <button
       onClick={onLockedClick}
@@ -177,7 +178,8 @@ function Sidebar({ trial = false, onLockedClick, mobileOpen = false, onCloseMobi
       ) : (
         <button
           type="button"
-          className="w-full bg-[#5946D6] hover:bg-[#4838C4] text-white font-semibold rounded-2xl px-4 py-3 flex items-center justify-center gap-2 transition shadow-md shadow-[#5946D6]/20 mb-6"
+          onClick={onNewEvent}
+          className="w-full bg-[#5946D6] hover:bg-[#4838C4] text-white font-semibold rounded-2xl px-4 py-3 flex items-center justify-center gap-2 transition shadow-md shadow-[#5946D6]/20 mb-6 cursor-pointer"
         >
           <PlusIcon />
           New Event
@@ -423,10 +425,17 @@ function HomeContent() {
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [activeEventId, setActiveEventId] = useState(null);
   const userMenuRef = useRef(null);
   const router = useRouter();
 
-  // Load the current Supabase user (only when not in trial mode)
+  // Computed: user's avatar URL (from metadata) or null (blank circle fallback)
+  const userAvatarUrl = user?.user_metadata?.avatar_url || null;
+  const userDisplayName = user?.user_metadata?.display_name || "";
+
+  // Load the current Supabase user and their events (skip in trial mode)
   useEffect(() => {
     if (trial) return;
     let active = true;
@@ -434,10 +443,184 @@ function HomeContent() {
       const { createClient } = await import("@/lib/supabase/client");
       const supabase = createClient();
       const { data: { user: u } } = await supabase.auth.getUser();
-      if (active) setUser(u);
+      if (!active) return;
+      setUser(u);
+      if (!u) return;
+
+      // Fetch this user's events (most recent first)
+      let { data: evts } = await supabase
+        .from("events")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (!active) return;
+
+      // If user has no events yet:
+      //   • check for legacy messages without an event_id → migrate them
+      //   • otherwise just create their first event with a welcome message
+      if (!evts || evts.length === 0) {
+        const { data: legacyMsgs } = await supabase
+          .from("messages")
+          .select("id")
+          .is("event_id", null)
+          .limit(1);
+
+        const hasLegacy = legacyMsgs && legacyMsgs.length > 0;
+        const title = hasLegacy ? "First conversation" : "New event";
+
+        const { data: newEvent, error: createErr } = await supabase
+          .from("events")
+          .insert({ user_id: u.id, title, icon: "🎁" })
+          .select()
+          .single();
+
+        if (createErr) {
+          console.error("Failed to create initial event:", createErr);
+          return;
+        }
+
+        if (hasLegacy) {
+          // Move all orphan messages into this event so nothing is lost
+          await supabase
+            .from("messages")
+            .update({ event_id: newEvent.id })
+            .is("event_id", null);
+        } else {
+          // Brand-new account → seed with the welcome message
+          await supabase.from("messages").insert({
+            user_id: u.id,
+            event_id: newEvent.id,
+            role: "assistant",
+            content: "Hey 🎁 Who's the gift for?",
+            choices: [],
+            products: [],
+          });
+        }
+
+        evts = [newEvent];
+      }
+
+      if (!active) return;
+      setEvents(evts);
+      setActiveEventId(evts[0].id);
     })();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [trial]);
+
+  // Load messages whenever the active event changes
+  useEffect(() => {
+    if (trial || !activeEventId) return;
+    let active = true;
+    (async () => {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { data: rows, error } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("event_id", activeEventId)
+        .order("created_at", { ascending: true });
+
+      if (!active) return;
+      if (error) {
+        console.error("Failed to load messages for event:", error);
+        return;
+      }
+
+      if (rows && rows.length > 0) {
+        setMessages(
+          rows.map((r) => ({
+            role: r.role,
+            content: r.content,
+            choices: r.choices || [],
+            products: r.products || [],
+            time: new Date(r.created_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          }))
+        );
+      } else {
+        // New empty event — show the welcome message in UI without persisting yet
+        setMessages([
+          {
+            role: "assistant",
+            content: "Hey 🎁 Who's the gift for?",
+            choices: [],
+            products: [],
+            time: getTime(),
+          },
+        ]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [activeEventId, trial]);
+
+  // Helper to persist a message to Supabase under the current event
+  async function persistMessage(msg) {
+    if (trial || !user || !activeEventId) return;
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("messages").insert({
+        user_id: user.id,
+        event_id: activeEventId,
+        role: msg.role,
+        content: msg.content,
+        choices: msg.choices || [],
+        products: msg.products || [],
+      });
+      // Bump the event's updated_at so it sorts to the top
+      await supabase
+        .from("events")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", activeEventId);
+    } catch (e) {
+      console.error("Failed to persist message:", e);
+    }
+  }
+
+  // Create a brand new event (preserves previous ones as separate cards)
+  async function startNewConversation() {
+    if (!user) return;
+    setUserMenuOpen(false);
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+
+      const { data: newEvent, error } = await supabase
+        .from("events")
+        .insert({ user_id: user.id, title: "New event", icon: "🎁" })
+        .select()
+        .single();
+      if (error) throw error;
+
+      // Seed the new event with a welcome message
+      await supabase.from("messages").insert({
+        user_id: user.id,
+        event_id: newEvent.id,
+        role: "assistant",
+        content: "Hey 🎁 Who's the gift for?",
+        choices: [],
+        products: [],
+      });
+
+      // Add to the events list and switch to it
+      setEvents((prev) => [newEvent, ...prev]);
+      setActiveEventId(newEvent.id);
+    } catch (e) {
+      console.error("Failed to create new event:", e);
+    }
+  }
+
+  // Switch to a different existing event
+  function selectEvent(eventId) {
+    setActiveEventId(eventId);
+    setMobileSidebarOpen(false);
+  }
 
   // Count AI responses that delivered actual product recommendations.
   // The first one locks the paywall in for trial users.
@@ -493,6 +676,9 @@ function HomeContent() {
     setInput("");
     setLoading(true);
 
+    // Persist the user message to Supabase (signed-in users only)
+    persistMessage({ role: "user", content: text });
+
     try {
       const apiMessages = newMessages.map((m) => ({
         role: m.role,
@@ -506,16 +692,17 @@ function HomeContent() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data.reply,
-          choices: data.choices || [],
-          products: data.products || [],
-          time: getTime(),
-        },
-      ]);
+      const assistantMessage = {
+        role: "assistant",
+        content: data.reply,
+        choices: data.choices || [],
+        products: data.products || [],
+        time: getTime(),
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+
+      // Persist the AI reply
+      persistMessage(assistantMessage);
     } catch (err) {
       console.error("Frontend error:", err);
       setMessages((prev) => [
@@ -549,6 +736,10 @@ function HomeContent() {
         onLockedClick={handleLockedClick}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
+        onNewEvent={() => {
+          setMobileSidebarOpen(false);
+          startNewConversation();
+        }}
       />
 
       {/* Main area */}
@@ -579,26 +770,46 @@ function HomeContent() {
               onClick={() => setUserMenuOpen((v) => !v)}
               aria-label="Open user menu"
               aria-expanded={userMenuOpen}
-              className={`w-11 h-11 rounded-full bg-[#1E1E2E]/10 border border-[#1E1E2E]/15 hover:bg-[#1E1E2E]/15 transition cursor-pointer ${
+              className={`w-11 h-11 rounded-full overflow-hidden bg-[#1E1E2E]/10 border border-[#1E1E2E]/15 hover:bg-[#1E1E2E]/15 transition cursor-pointer ${
                 userMenuOpen ? "ring-2 ring-[#5946D6] ring-offset-2 ring-offset-[#FAEEDB]" : ""
               }`}
-            />
+            >
+              {userAvatarUrl && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={userAvatarUrl} alt="" className="w-full h-full object-cover" />
+              )}
+            </button>
 
             {userMenuOpen && (
               <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl border border-[#1E1E2E]/10 shadow-xl overflow-hidden z-50">
-                <div className="px-4 py-3 border-b border-[#1E1E2E]/8">
-                  <p className="text-sm font-bold text-[#1E1E2E]">Welcome 👋</p>
-                  <p className="text-xs text-[#6B6354] truncate">
-                    {user?.email || "Loading…"}
-                  </p>
+                <div className="px-4 py-3 border-b border-[#1E1E2E]/8 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full overflow-hidden bg-[#FAEEDB] shrink-0 ring-1 ring-[#1E1E2E]/8">
+                    {userAvatarUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={userAvatarUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full bg-[#1E1E2E]/10" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-[#1E1E2E] truncate">
+                      {userDisplayName || "Welcome 👋"}
+                    </p>
+                    <p className="text-xs text-[#6B6354] truncate">
+                      {user?.email || "Loading…"}
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setUserMenuOpen(false)}
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    setProfileOpen(true);
+                  }}
                   className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-[#1E1E2E] hover:bg-[#FAEEDB] transition"
                 >
                   <GearIcon className="w-4 h-4" />
-                  Settings
+                  Profile &amp; settings
                 </button>
                 <div className="border-t border-[#1E1E2E]/8" />
                 <button
@@ -614,6 +825,43 @@ function HomeContent() {
           </div>
           )}
         </header>
+
+        {/* Events bar — shows all the user's gift situations as cards */}
+        {!trial && events.length > 1 && (
+          <div className="px-6 lg:px-12 pb-4">
+            <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+              {events.map((evt) => {
+                const isActive = evt.id === activeEventId;
+                return (
+                  <button
+                    key={evt.id}
+                    type="button"
+                    onClick={() => selectEvent(evt.id)}
+                    className={`shrink-0 w-52 rounded-2xl border-2 px-4 py-3 text-left transition cursor-pointer ${
+                      isActive
+                        ? "bg-white border-[#5946D6] shadow-md"
+                        : "bg-white/60 border-[#1E1E2E]/8 hover:border-[#1E1E2E]/30 hover:bg-white"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-2xl shrink-0">{evt.icon || "🎁"}</span>
+                      <p className="font-bold text-sm text-[#1E1E2E] truncate flex-1">
+                        {evt.title || "New event"}
+                      </p>
+                    </div>
+                    <p className="text-[11px] text-[#6B6354] truncate">
+                      {evt.recipient_name
+                        ? `For ${evt.recipient_name}`
+                        : isActive
+                        ? "Currently chatting"
+                        : "Tap to resume"}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Body */}
         <div className="flex-1 px-6 lg:px-12 pb-6 flex flex-col">
@@ -682,7 +930,12 @@ function HomeContent() {
                         </div>
                       </div>
                       {isUser && (
-                        <div className="w-9 h-9 rounded-full bg-[#1E1E2E]/10 border border-[#1E1E2E]/15 shrink-0" />
+                        <div className="w-9 h-9 rounded-full overflow-hidden bg-[#1E1E2E]/10 border border-[#1E1E2E]/15 shrink-0">
+                          {userAvatarUrl && (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={userAvatarUrl} alt="" className="w-full h-full object-cover" />
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -788,6 +1041,19 @@ function HomeContent() {
 
       {/* Trial paywall — mandatory after first recommendation in trial mode */}
       <TrialPaywall open={paywallOpen} />
+
+      {/* Profile modal — opens from the avatar dropdown's "Profile & settings" item */}
+      <ProfileModal
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        user={user}
+        onSaved={(metadata) => {
+          // Optimistically update local state so the avatar/name appear instantly
+          setUser((prev) =>
+            prev ? { ...prev, user_metadata: { ...prev.user_metadata, ...metadata } } : prev
+          );
+        }}
+      />
     </main>
   );
 }

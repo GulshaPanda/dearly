@@ -12,6 +12,66 @@ function getTime() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// ============ EVENT CARD HELPERS ============
+
+// Warm gradient palettes — assigned deterministically per event so cards stay consistent
+const EVENT_GRADIENTS = [
+  "from-[#FFD7C9] via-[#F5BBA9] to-[#E6A28F]",  // peach
+  "from-[#E0DAFF] via-[#C9C0FF] to-[#A89DFF]",  // lavender
+  "from-[#FFE0EC] via-[#FFC2D7] to-[#FF9DBE]",  // pink
+  "from-[#FFF5DE] via-[#FBE4B0] to-[#F5C97D]",  // cream/gold
+  "from-[#D7F0E0] via-[#B6E0C6] to-[#8FCBA9]",  // sage
+  "from-[#D7E8FF] via-[#B0CFFF] to-[#7FAEFF]",  // sky
+];
+
+function getEventGradient(id) {
+  if (!id) return EVENT_GRADIENTS[0];
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return EVENT_GRADIENTS[Math.abs(hash) % EVENT_GRADIENTS.length];
+}
+
+const STATUS_STYLES = {
+  planning: { label: "Planning", badge: "bg-[#FBE2DA] text-[#C75A4E]", bar: "bg-[#E16D5A]" },
+  in_progress: { label: "In Progress", badge: "bg-[#ECE3F8] text-[#5946D6]", bar: "bg-[#5946D6]" },
+  ideas: { label: "Ideas", badge: "bg-[#D7E8FF] text-[#3B6FCE]", bar: "bg-[#3B6FCE]" },
+  not_started: { label: "Not Started", badge: "bg-[#FBEFD2] text-[#A4791F]", bar: "bg-[#E5A93C]" },
+};
+
+function getStatusStyle(status) {
+  return STATUS_STYLES[status] || STATUS_STYLES.planning;
+}
+
+function formatEventDate(date) {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function getDaysLeft(date) {
+  if (!date) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  const diff = Math.round((target - today) / (1000 * 60 * 60 * 24));
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff > 0) return `${diff} days left`;
+  if (diff === -1) return "Yesterday";
+  return `${Math.abs(diff)} days ago`;
+}
+
+function CameraIcon({ className = "w-3.5 h-3.5" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  );
+}
+
 // =================== ICONS ===================
 
 function PlusIcon({ className = "w-5 h-5" }) {
@@ -428,8 +488,127 @@ function HomeContent() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [events, setEvents] = useState([]);
   const [activeEventId, setActiveEventId] = useState(null);
+  const [uploadingEventId, setUploadingEventId] = useState(null);
+  const [editingTitleId, setEditingTitleId] = useState(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [draggingImageId, setDraggingImageId] = useState(null);
+  const [tempImagePosition, setTempImagePosition] = useState(50);
   const userMenuRef = useRef(null);
+  const eventFileInputRef = useRef(null);
+  const dragStartRef = useRef(null);
   const router = useRouter();
+
+  // ============ Title editing ============
+  function startEditTitle(evt, e) {
+    e?.stopPropagation?.();
+    setEditingTitleId(evt.id);
+    setTitleDraft(evt.title || "");
+  }
+  async function saveTitleEdit() {
+    if (!editingTitleId) return;
+    const newTitle = titleDraft.trim() || "Untitled event";
+    const id = editingTitleId;
+    setEditingTitleId(null);
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("events").update({ title: newTitle }).eq("id", id);
+      setEvents((prev) => prev.map((evt) => (evt.id === id ? { ...evt, title: newTitle } : evt)));
+    } catch (e) {
+      console.error("Failed to save title:", e);
+    }
+  }
+
+  // ============ Image dragging to reposition ============
+  function startImageDrag(evt, e) {
+    if (!evt.image_url) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const y = e.clientY ?? e.touches?.[0]?.clientY;
+    setDraggingImageId(evt.id);
+    setTempImagePosition(evt.image_position_y ?? 50);
+    dragStartRef.current = { y, pos: evt.image_position_y ?? 50 };
+  }
+
+  useEffect(() => {
+    if (!draggingImageId) return;
+    function onMove(e) {
+      if (!dragStartRef.current) return;
+      const y = e.clientY ?? e.touches?.[0]?.clientY;
+      if (y == null) return;
+      const dy = y - dragStartRef.current.y;
+      // 1 px drag = ~1% position change
+      const newPos = Math.max(0, Math.min(100, dragStartRef.current.pos + dy));
+      setTempImagePosition(newPos);
+    }
+    async function onUp() {
+      const id = draggingImageId;
+      const finalPos = Math.round(tempImagePosition);
+      setDraggingImageId(null);
+      dragStartRef.current = null;
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        await supabase.from("events").update({ image_position_y: finalPos }).eq("id", id);
+        setEvents((prev) =>
+          prev.map((evt) => (evt.id === id ? { ...evt, image_position_y: finalPos } : evt))
+        );
+      } catch (e) {
+        console.error("Failed to save image position:", e);
+      }
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onUp);
+    };
+  }, [draggingImageId, tempImagePosition]);
+
+  // Trigger the file picker for a specific event's cover image
+  function triggerEventImageUpload(eventId, e) {
+    e?.stopPropagation?.();
+    setUploadingEventId(eventId);
+    eventFileInputRef.current?.click();
+  }
+
+  async function handleEventImageChange(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // reset so picking the same file again still fires onChange
+    if (!file || !uploadingEventId || !user) return;
+    if (file.size > 5 * 1024 * 1024) {
+      console.warn("Image too large (max 5 MB)");
+      return;
+    }
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const ext = file.name.split(".").pop().toLowerCase();
+      const path = `${user.id}/events/${uploadingEventId}/cover-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("avatars")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+
+      await supabase
+        .from("events")
+        .update({ image_url: data.publicUrl })
+        .eq("id", uploadingEventId);
+
+      setEvents((prev) =>
+        prev.map((evt) => (evt.id === uploadingEventId ? { ...evt, image_url: data.publicUrl } : evt))
+      );
+    } catch (err) {
+      console.error("Event image upload failed:", err);
+    } finally {
+      setUploadingEventId(null);
+    }
+  }
 
   // Computed: user's avatar URL (from metadata) or null (blank circle fallback)
   const userAvatarUrl = user?.user_metadata?.avatar_url || null;
@@ -826,40 +1005,149 @@ function HomeContent() {
           )}
         </header>
 
-        {/* Events bar — shows all the user's gift situations as cards */}
-        {!trial && events.length > 1 && (
+        {/* Events bar — rich cards for each gift situation */}
+        {!trial && events.length >= 1 && (
           <div className="px-6 lg:px-12 pb-4">
-            <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+            <div className="flex gap-4 overflow-x-auto pb-2 -mx-1 px-1">
               {events.map((evt) => {
                 const isActive = evt.id === activeEventId;
+                const gradient = getEventGradient(evt.id);
+                const style = getStatusStyle(evt.status);
+                const dateText = formatEventDate(evt.event_date);
+                const daysLeftText = getDaysLeft(evt.event_date);
+                const progress = Math.max(0, Math.min(100, evt.progress ?? 0));
                 return (
-                  <button
+                  <div
                     key={evt.id}
-                    type="button"
                     onClick={() => selectEvent(evt.id)}
-                    className={`shrink-0 w-52 rounded-2xl border-2 px-4 py-3 text-left transition cursor-pointer ${
+                    className={`shrink-0 w-[260px] rounded-2xl border-2 overflow-hidden cursor-pointer transition bg-white ${
                       isActive
-                        ? "bg-white border-[#5946D6] shadow-md"
-                        : "bg-white/60 border-[#1E1E2E]/8 hover:border-[#1E1E2E]/30 hover:bg-white"
+                        ? "border-[#5946D6] shadow-lg"
+                        : "border-[#1E1E2E]/8 hover:border-[#1E1E2E]/30 hover:shadow-md"
                     }`}
                   >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-2xl shrink-0">{evt.icon || "🎁"}</span>
-                      <p className="font-bold text-sm text-[#1E1E2E] truncate flex-1">
-                        {evt.title || "New event"}
-                      </p>
+                    {/* Image area — draggable to reposition when an image is set */}
+                    <div
+                      className={`relative h-24 overflow-hidden ${
+                        evt.image_url ? "cursor-ns-resize" : ""
+                      }`}
+                      onMouseDown={(e) => startImageDrag(evt, e)}
+                      onTouchStart={(e) => startImageDrag(evt, e)}
+                    >
+                      {evt.image_url ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={evt.image_url}
+                          alt=""
+                          draggable={false}
+                          className="w-full h-full object-cover select-none"
+                          style={{
+                            objectPosition: `center ${
+                              draggingImageId === evt.id
+                                ? tempImagePosition
+                                : evt.image_position_y ?? 50
+                            }%`,
+                          }}
+                        />
+                      ) : (
+                        <div className={`w-full h-full bg-gradient-to-br ${gradient}`} />
+                      )}
+
+                      {/* Drag hint when image present */}
+                      {evt.image_url && draggingImageId !== evt.id && (
+                        <div className="absolute inset-x-0 bottom-0 px-3 py-1 bg-gradient-to-t from-black/40 to-transparent pointer-events-none flex justify-center">
+                          <span className="text-[10px] text-white/90 font-medium">↕ drag to adjust</span>
+                        </div>
+                      )}
+
+                      {/* Camera button — upload/change cover */}
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onTouchStart={(e) => e.stopPropagation()}
+                        onClick={(e) => triggerEventImageUpload(evt.id, e)}
+                        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/85 hover:bg-white flex items-center justify-center text-[#1E1E2E] transition shadow-sm z-10"
+                        aria-label="Change cover image"
+                        title={evt.image_url ? "Change cover" : "Add cover image"}
+                      >
+                        <CameraIcon />
+                      </button>
+
+                      {/* Icon badge overlay */}
+                      <div className="absolute -bottom-3 left-3 w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center text-lg z-10">
+                        {evt.icon || "🎁"}
+                      </div>
                     </div>
-                    <p className="text-[11px] text-[#6B6354] truncate">
-                      {evt.recipient_name
-                        ? `For ${evt.recipient_name}`
-                        : isActive
-                        ? "Currently chatting"
-                        : "Tap to resume"}
-                    </p>
-                  </button>
+
+                    {/* Card body */}
+                    <div className="px-4 pt-5 pb-3">
+                      {editingTitleId === evt.id ? (
+                        <input
+                          type="text"
+                          autoFocus
+                          value={titleDraft}
+                          onChange={(e) => setTitleDraft(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={saveTitleEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveTitleEdit();
+                            if (e.key === "Escape") setEditingTitleId(null);
+                          }}
+                          placeholder="e.g. Mom's Birthday"
+                          className="font-bold text-[15px] text-[#1E1E2E] w-full bg-[#FAEEDB]/60 rounded-lg px-2 py-0.5 mb-0.5 -ml-2 border border-[#5946D6] focus:outline-none focus:ring-2 focus:ring-[#5946D6]/30"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => startEditTitle(evt, e)}
+                          className="group font-bold text-[15px] text-[#1E1E2E] truncate mb-0.5 text-left w-full flex items-center gap-1.5 hover:text-[#5946D6] transition"
+                          title="Click to rename"
+                        >
+                          <span className="truncate">{evt.title || "Untitled event"}</span>
+                          <svg className="w-3 h-3 opacity-0 group-hover:opacity-60 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                          </svg>
+                        </button>
+                      )}
+                      <p className="text-[11px] text-[#6B6354] truncate mb-3">
+                        {dateText && daysLeftText
+                          ? `${dateText} • ${daysLeftText}`
+                          : evt.recipient_name
+                          ? `For ${evt.recipient_name}`
+                          : isActive
+                          ? "Currently chatting"
+                          : "Tap to resume"}
+                      </p>
+
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span
+                          className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${style.badge}`}
+                        >
+                          {style.label}
+                        </span>
+                        <span className="text-xs font-bold text-[#1E1E2E]">{progress}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-[#1E1E2E]/8 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${style.bar} transition-all`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 );
               })}
             </div>
+
+            {/* Hidden file input shared by all event cards */}
+            <input
+              ref={eventFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={handleEventImageChange}
+              className="hidden"
+            />
           </div>
         )}
 

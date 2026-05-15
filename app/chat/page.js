@@ -72,6 +72,27 @@ function CameraIcon({ className = "w-3.5 h-3.5" }) {
   );
 }
 
+function KebabIcon({ className = "w-4 h-4" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="12" cy="5" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="12" cy="19" r="1.6" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className = "w-4 h-4" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+    </svg>
+  );
+}
+
 // =================== ICONS ===================
 
 function PlusIcon({ className = "w-5 h-5" }) {
@@ -493,6 +514,7 @@ function HomeContent() {
   const [titleDraft, setTitleDraft] = useState("");
   const [draggingImageId, setDraggingImageId] = useState(null);
   const [tempImagePosition, setTempImagePosition] = useState(50);
+  const [openMenuEventId, setOpenMenuEventId] = useState(null);
   const userMenuRef = useRef(null);
   const eventFileInputRef = useRef(null);
   const dragStartRef = useRef(null);
@@ -801,6 +823,62 @@ function HomeContent() {
     setMobileSidebarOpen(false);
   }
 
+  // Delete an event (and its messages, via the FK cascade)
+  async function deleteEvent(eventId) {
+    setOpenMenuEventId(null);
+    const ok = typeof window !== "undefined"
+      ? window.confirm("Delete this event and its conversation? This can't be undone.")
+      : true;
+    if (!ok) return;
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { error } = await supabase.from("events").delete().eq("id", eventId);
+      if (error) throw error;
+
+      const remaining = events.filter((e) => e.id !== eventId);
+      setEvents(remaining);
+
+      if (activeEventId === eventId) {
+        if (remaining.length > 0) {
+          setActiveEventId(remaining[0].id);
+        } else if (user) {
+          // No events left — auto-create a fresh one so the chat keeps working
+          const { data: newEvent, error: createErr } = await supabase
+            .from("events")
+            .insert({ user_id: user.id, title: "New event", icon: "🎁" })
+            .select()
+            .single();
+          if (createErr) throw createErr;
+          await supabase.from("messages").insert({
+            user_id: user.id,
+            event_id: newEvent.id,
+            role: "assistant",
+            content: "Hey 🎁 Who's the gift for?",
+            choices: [],
+            products: [],
+          });
+          setEvents([newEvent]);
+          setActiveEventId(newEvent.id);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to delete event:", e);
+    }
+  }
+
+  // Close any open event menu when clicking elsewhere
+  useEffect(() => {
+    if (!openMenuEventId) return;
+    function onDocClick(e) {
+      if (e.target.closest("[data-event-menu]")) return;
+      setOpenMenuEventId(null);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [openMenuEventId]);
+
   // Count AI responses that delivered actual product recommendations.
   // The first one locks the paywall in for trial users.
   const productResponseCount = messages.filter(
@@ -1080,7 +1158,41 @@ function HomeContent() {
                     </div>
 
                     {/* Card body */}
-                    <div className="px-4 pt-5 pb-3">
+                    <div className="px-4 pt-5 pb-3 relative">
+                      {/* Kebab menu in top-right of body area */}
+                      <div
+                        className="absolute top-2 right-2"
+                        data-event-menu
+                      >
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuEventId(openMenuEventId === evt.id ? null : evt.id);
+                          }}
+                          className="w-7 h-7 rounded-full hover:bg-[#1E1E2E]/8 flex items-center justify-center text-[#1E1E2E]/60 hover:text-[#1E1E2E] transition cursor-pointer"
+                          aria-label="More options"
+                        >
+                          <KebabIcon />
+                        </button>
+
+                        {openMenuEventId === evt.id && (
+                          <div className="absolute right-0 top-9 w-44 bg-white rounded-2xl border border-[#1E1E2E]/10 shadow-xl overflow-hidden z-30">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteEvent(evt.id);
+                              }}
+                              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-[#E16D5A] hover:bg-[#E16D5A]/10 transition cursor-pointer"
+                            >
+                              <TrashIcon className="w-3.5 h-3.5" />
+                              Delete event
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
                       {editingTitleId === evt.id ? (
                         <input
                           type="text"
@@ -1100,7 +1212,7 @@ function HomeContent() {
                         <button
                           type="button"
                           onClick={(e) => startEditTitle(evt, e)}
-                          className="group font-bold text-[15px] text-[#1E1E2E] truncate mb-0.5 text-left w-full flex items-center gap-1.5 hover:text-[#5946D6] transition"
+                          className="group font-bold text-[15px] text-[#1E1E2E] truncate mb-0.5 text-left w-[calc(100%-2.5rem)] flex items-center gap-1.5 hover:text-[#5946D6] transition"
                           title="Click to rename"
                         >
                           <span className="truncate">{evt.title || "Untitled event"}</span>
